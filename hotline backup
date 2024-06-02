@@ -1,0 +1,866 @@
+##Import libraries
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+%matplotlib inline
+import seaborn as sns
+import plotly.express as px
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import cross_validate
+from sklearn.preprocessing import OneHotEncoder,RobustScaler,LabelEncoder,OrdinalEncoder
+from category_encoders import BinaryEncoder
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from imblearn.over_sampling import BorderlineSMOTE
+from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
+
+##read data
+data_base=pd.read_excel(r"C:\Users\etaha2\Downloads\Model Data\Data_base_model_update.xlsx",sheet_name="base",dtype={"Customer Code":str})
+
+## copy data
+data=data_base.copy()
+
+## divided data to train and validated
+from sklearn.model_selection import train_test_split
+
+# Optional Step: Further split the training data into training and validation sets
+train_data, val_data = train_test_split(data_base, test_size=0.2, random_state=42)
+
+# Checking the sizes of the splits
+print(f"Training set size: {train_data.shape[0]}")
+print(f"Validation set size: {val_data.shape[0]}")
+
+val_data.to_excel(r'C:\Users\etaha2\Downloads\Model Data\Validation set.xlsx',sheet_name="Data",index=False)
+
+## check duplicated for all data
+len(train_data[train_data.duplicated])
+
+## check duplicated for customer code column
+len(train_data[train_data.duplicated('Customer Code')])
+
+## check data shape
+train_data.shape
+
+train_data
+
+## check inofrmation about data
+train_data.info()
+
+from warnings import simplefilter
+# ignore all future warnings
+simplefilter(action='ignore', category=FutureWarning)
+
+train_data.columns
+
+num_col=train_data.select_dtypes(include=np.number).columns
+num_col
+
+cat_col=train_data.select_dtypes("object").columns
+cat_col
+
+### Univariate analysis for cat columns
+
+
+train_data['Final Tarrif'].value_counts()
+
+## Make new columns included account red and other non red as most of data is red
+train_data['Tarrif_combinetion']=train_data['Final Tarrif'].replace(['Mixed','Data','ADSL','Flex CL','VF Easy','Flex Open'],"Non red")
+
+train_data['Tarrif_combinetion'].astype(str)
+train_data['Tarrif_combinetion'].value_counts()
+
+train_data['Status'].value_counts()
+
+train_data['Customer Segment'].unique()
+
+train_data['Customer Segment'].value_counts()
+
+px.histogram(data_frame=train_data , x='Customer Segment')
+
+- Chart showing that most of customers NA segment as it included deactive customer so the high segment have most of customer then welcome and premium.
+
+train_data['Price Group'].value_counts()
+
+EMPLOYEES=train_data[train_data['Price Group']=="EMPLOYEES"]
+
+train_data.drop(EMPLOYEES.index,inplace=True)
+
+train_data.reset_index(drop=True,inplace=True)
+
+## remove unneeded column'Price Group'
+train_data.drop(['Price Group','Status','Number Of Unbilled Bills'],axis=1,inplace=True)
+
+train_data['Current Status'].value_counts(normalize=True)
+
+px.histogram(data_frame=train_data,x='Current Status')
+
+- chart showing that 26% of customers make deactive for line and 18% got suspension which is big percent as almost 44% from customers didn't use line now.
+
+train_data['ADSL'].value_counts()
+
+fig = plt.figure(figsize= (5,5))
+sns.countplot(data=train_data,x='ADSL',palette='rocket')
+
+train_data.rename(columns={'Type': 'Activation source'}, inplace=True)
+
+px.histogram(data_frame=train_data,x='Activation source')
+
+- Chart showing that most of customer lines activated by CVM team.
+
+train_data['Tariff Model'].unique()
+
+## to remove ", " to ","
+train_data['Tariff Model'] = train_data['Tariff Model'].apply(lambda x: x.replace(", ", ",").strip())
+# Create a new column with the list of services
+train_data['Tariff_Model_list']= train_data['Tariff Model'].apply(lambda x: x.split(','))
+
+## check rate plan enclude more than 1000 accounts
+Tariff_Model_lessthan1000 = train_data['Tariff_Model_list'].value_counts()
+Tariff_less_than_1000= Tariff_Model_lessthan1000[Tariff_Model_lessthan1000 >1000]
+Tariff_less_than_1000
+
+## to check number of accounts in every rateplan
+from collections import Counter
+
+# Flatten the list of lists into a single list
+all_services = [service for sublist in train_data['Tariff_Model_list'] for service in sublist]
+
+# Count the occurrences of each service
+service_counts = Counter(all_services)
+
+# Convert to a DataFrame for easier manipulation
+service_counts_df = pd.DataFrame(service_counts.items(), columns=['Service', 'Count']).sort_values(by='Count', ascending=False)
+
+
+service_counts_df.head(10)
+
+top_services = service_counts_df.head(10)
+
+plt.figure(figsize=(15, 5))
+sns.barplot(data=top_services, x='Service', y='Count', palette='viridis')
+plt.xticks(rotation=40)
+plt.yticks(fontsize=10)
+plt.title('Top 10 Most Common Services')
+plt.show()
+
+## to check most frequent rateplan combinations
+from itertools import combinations
+
+# Define a function to get combinations of services and ensure elements are strings
+def get_combinations(service_list):
+    return [",".join(sorted(map(str, comb))) for comb in combinations(service_list,2)]
+
+# Apply the function to the 'Service Tariff List' column
+train_data['Service Combinations'] = train_data['Tariff_Model_list'].apply(lambda x: get_combinations(x))
+
+# Flatten the list of lists into a single list
+all_combinations = [comb for sublist in train_data['Service Combinations'] for comb in sublist]
+
+# Count the occurrences of each combination
+combination_counts = Counter(all_combinations)
+
+# Convert to a DataFrame for easier manipulation
+combination_counts_df = pd.DataFrame(combination_counts.items(), columns=['Combination', 'Count']).sort_values(by='Count', ascending=False)
+
+
+combination_counts_df.head(10)
+
+ - Normal result reference to rateplan package.
+
+# Count the occurrences of each value in 'Tariff_Model_list'
+value_counts = train_data['Tariff_Model_list'].value_counts()
+
+# Identify values with counts less than 1000
+other_values = value_counts[value_counts < 1000].index
+
+# Filter the DataFrame to identify rows where 'Tariff_Model_list' is in 'other_values'
+rows_to_replace = train_data['Tariff_Model_list'].isin(other_values)
+
+# Replace 'Tariff_Model_list' values in these rows with a list containing only 'Other'
+train_data.loc[rows_to_replace, 'Tariff_Model_list'] = [['Other']]
+
+
+# Convert 'Other' to a list
+train_data['Tariff_Model_list'] = train_data['Tariff_Model_list'].apply(lambda x: [x] if not isinstance(x, list) else x)
+
+
+train_data['Payment Channel'].value_counts().head(20)
+
+# Fill missing values with a specific label like 'Unknown'
+train_data['Payment Channel'] = train_data['Payment Channel'].fillna('')
+
+# Add a binary feature to indicate missing values
+train_data['Payment_Channel_Missing'] = train_data['Payment Channel'].isnull().astype(int)
+
+# Standardize the 'Payment Channel' values
+train_data['Payment_Channel_list'] = train_data['Payment Channel'].apply(lambda x: x.replace(", ", ",").strip())
+train_data['Standardized Payment Channel'] = train_data['Payment_Channel_list'].apply(lambda x: ','.join(set(x.split(','))))
+
+
+Standardized_Payment_top10=train_data['Standardized Payment Channel'].value_counts().head(10).reset_index()
+
+Standardized_Payment_top10
+
+px.histogram(data_frame=Standardized_Payment_top10 , x ='Standardized Payment Channel' , y ="count")
+
+train_data['Standardized Payment Channel'].value_counts()
+
+### Univariate analysis for NUM_col
+
+## check 'Num_Hotline' and clean to extract target variable
+train_data['Num_Hotline'].unique()
+
+train_data['Num_Hotline'].isna().sum()
+
+train_data['Num_Hotline']=train_data['Num_Hotline'].astype(int)
+
+# Function to classify values
+def classify_num_hotline(value):
+    if value == 0:
+        return 'outstanding'
+    elif value <=3:
+        return 'Normal'
+    
+    elif value <= 6:
+        return 'risky'
+    else:
+        return 'very risky'
+
+# Apply the classification function to create a new column
+train_data['Hotline_Class'] = train_data['Num_Hotline'].apply(classify_num_hotline)
+
+
+train_data['Hotline_Class'].value_counts(normalize=True)
+
+fig= plt.figure(figsize=(4,4))
+train_data['Hotline_Class'].value_counts(normalize=True).plot.pie(autopct ='%1.2f%%')
+plt.title('Hotline_Class', fontdict={'fontsize': 10, 'fontweight' : 2, 'color' : 'Green'})
+plt.show()
+
+- Chart showing that most of cutsomer is outstanding.
+- And data imbalancing.
+
+## check % of missing values 
+train_data.isnull().mean() * 100
+
+train_data.drop(['Last Hotline Date','Last Suspension Date'],axis=1,inplace=True)
+
+### Univariate analysis for num col
+
+train_data['Bill Cycle'].value_counts(normalize=True)
+
+train_data['Bill Cycle']=train_data['Bill Cycle'].astype(str)
+
+fig= plt.figure(figsize=(4,4))
+train_data['Bill Cycle'].value_counts(normalize=True).plot.pie(autopct ='%1.2f%%')
+plt.title('Bill Cycle', fontdict={'fontsize': 10, 'fontweight' : 2, 'color' : 'Green'})
+plt.show()
+
+- most of billing on bill cycle 2 with 58%
+
+train_data['Billing Amount'].value_counts()
+
+zero_billing=(train_data[train_data['Billing Amount'] == 0])
+len(zero_billing)
+
+train_data.drop(zero_billing.index,inplace=True)
+train_data.reset_index(drop=True,inplace=True)
+
+train_data['Billing Amount'].value_counts()
+
+px.box(data_frame=train_data,x='Billing Amount')
+
+- There are many outliers , so we will use Robust Scaler for scaling data
+
+# calculate IQR for column Height
+Q1 = train_data['Billing Amount'].quantile(0.25)
+Q3 = train_data['Billing Amount'].quantile(0.75)
+IQR = Q3 - Q1
+
+# identify outliers
+threshold = 1.5
+outliers = train_data[(train_data['Billing Amount'] < Q1 - threshold * IQR) | (train_data['Billing Amount'] > Q3 + threshold * IQR)]
+
+len(outliers)
+
+train_data['Activation Date'].value_counts()
+
+# Assuming train_data is your DataFrame and 'Activation Date' is the column containing the date values
+reference_date = pd.Timestamp('1899-12-30')  # Excel's reference date
+dates = [reference_date + pd.DateOffset(days=int(date)) for date in train_data['Activation Date']]
+
+# Create a new column 'Converted Dates' and assign the converted dates to it
+train_data = train_data.assign(Converted_Dates=dates)
+
+from datetime import date
+
+train_data['variance_days'] = np.datetime64(date.today()) - train_data['Converted_Dates']
+
+
+
+train_data['variance_days']=train_data['variance_days'].dt.days
+
+train_data['variance_days']=train_data['variance_days'] // 30
+
+inf_accounts=train_data[train_data['variance_days']== 0]
+
+train_data.drop(inf_accounts.index,inplace=True)
+train_data.reset_index(drop=True,inplace=True)
+
+train_data['AVG_payment_amount']=train_data['Billing Amount'] / train_data['variance_days']
+
+train_data['AVG_payment_amount'].describe()
+
+px.box(data_frame=train_data,x='AVG_payment_amount')
+
+# calculate IQR for column Height
+Q1 = train_data['AVG_payment_amount'].quantile(0.25)
+Q3 = train_data['AVG_payment_amount'].quantile(0.75)
+IQR = Q3 - Q1
+
+# identify outliers
+threshold = 1.5
+outliers = train_data[(train_data['AVG_payment_amount'] < Q1 - threshold * IQR) | (train_data['AVG_payment_amount'] > Q3 + threshold * IQR)]
+
+len(outliers)
+
+train_data['activation_years']=train_data['Converted_Dates'].dt.year
+
+train_data['activation_years'].value_counts()
+
+train_data['activation_months']=train_data['Converted_Dates'].dt.month_name()
+
+train_data['activation_months'].value_counts()
+
+px.histogram(data_frame=train_data,x='activation_months').update_xaxes(categoryorder="total descending")
+
+- Most of activation done in the beginning of the year.
+
+train_data['activation_day']=train_data['Converted_Dates'].dt.day_name()
+
+train_data['activation_day'].value_counts()
+
+px.histogram(data_frame=train_data,x='activation_day').update_xaxes(categoryorder="total descending")
+
+- Most of activation done in working days is it normal as most of actiovation done by CVM team.
+
+train_data['Hotline Count (Last 6 months)'].value_counts()
+
+train_data["Hotline_6months_Group"] = pd.cut(train_data["Hotline Count (Last 6 months)"],
+                                             bins=[0, 2,4, 6, 9, 12, 32],
+                                             labels=["0","0-4", "4-6", "6-9", "9-12", "12-32"])
+
+train_data["Hotline_6months_Group"].value_counts()
+
+px.histogram(data_frame=train_data,x="Hotline_6months_Group").update_xaxes(categoryorder="total descending")
+
+- Most of customer got hotline about 4 times in last 6 months.
+
+## percent of hotline comparing number of hotline with customer activation
+train_data['percentage_hotlines'] = (train_data['Num_Hotline'] / train_data['variance_days']) * 100
+train_data['percentage_hotlines'].value_counts()
+
+train_data['percentage_hotlines'].describe()
+
+- statistic analysis of percentage_hotlines:
+- Average of hotline percent 10% of customer get hotline comparing activation months.
+- 25% (1st quartile)the data are at or below 0% indicating that customer not got hotline.
+- 50% of customer hotline percent didn't exceed 4%.
+- 75% 3rd quartile 17% of customer get hotline duraing activation months.
+- Max means that 100% of customer get hotline compared to the duration of activation months.
+
+train_data['Bill_Cycle_Customer_Segment'] = train_data['Bill Cycle'].astype(str) + '_' + train_data['Customer Segment']
+
+train_data['Bill_Cycle_Customer_Segment']=train_data['Bill_Cycle_Customer_Segment'].astype(str)
+
+px.histogram(data_frame=train_data,x='Bill_Cycle_Customer_Segment')
+
+- BC2 include most of NA and welcome segment.
+
+## Bivariate analysis
+
+train_data.columns
+
+##What is the distribution of 'Hotline Class' within different customer segments?
+px.histogram(data_frame=train_data,x='Customer Segment',color='Hotline_Class').update_xaxes(categoryorder="total descending")
+
+- Chart showing that most of  very risky customer from premium and then the high customer.
+
+##correlation between 'Hotline Class' and the 'Final Tariff'?
+px.histogram(data_frame=train_data,x='Tarrif_combinetion',color='Hotline_Class',barmode='group',text_auto=True,width=600,height=500)
+
+- Chart showing that hotline class in every class more than non red customer and that normal as red customer have a large number of customer so it will not help me in predication.
+
+px.histogram(data_frame=train_data,x='Bill Cycle',color='Hotline_Class',barmode='group',text_auto=True,width=600,height=500)
+
+- Chart Showing that very risky customer in BC1 with 4K then BC2 2.2K but BC2 have most of risky customer then BC1 and BC4 have the lowest very risky customer and risky customer.
+
+## how 'Current Status' effective by hotline action
+px.histogram(data_frame=train_data, x ='Current Status' , color='Hotline_Class' , barmode='group' , text_auto=True,width = 900,
+                 height = 400)
+
+- Chart showing that hotline action didn't have big effect on customer deactive.
+
+## how 'Current Status' effective by 'Activation source'
+px.histogram(data_frame=train_data, x ='Activation source' , color='Current Status' , barmode='group' , text_auto=True,width = 800,
+                 height = 400)
+
+- CVM have highest number of deactive customer and suspension.
+
+## how 'Activation source' effective by 'Hotline_Class'
+px.histogram(data_frame=train_data, x ='Activation source' , color='Hotline_Class' , barmode='group' , text_auto=True,width = 800,
+                 height = 400)
+
+- CVM have highest risky and very risky customers.
+
+# Calculate counts of Hotline_Class for each ADSL category
+hotline_counts = train_data.groupby(['Activation source', 'Hotline_Class']).size().unstack(fill_value=0)
+
+# Calculate total counts of each 'Activation source' category
+total_counts = train_data['Activation source'].value_counts()
+
+# Calculate percentage of each Hotline_Class within each Activation source category
+hotline_percentages = (hotline_counts.T / total_counts).T * 100
+
+# Reset index to make ADSL and Hotline_Class columns
+hotline_percentages =round(hotline_percentages.reset_index(),1)
+
+# Melt DataFrame to use in plotly express
+melted_df = pd.melt(hotline_percentages, id_vars=['Activation source'], var_name='Hotline_Class', value_name='Percentage')
+
+# Create grouped histogram
+fig = px.bar(melted_df, x='Activation source', y='Percentage', color='Hotline_Class', barmode='group',
+             text='Percentage', title="Percentage of Hotline_Class for each Activation source",
+             labels={'Percentage': 'Percentage of Hotline_Class'},
+             width=800, height=400)
+
+# Show the plot
+fig.show()
+
+
+- percent of hotlive class from total each catogarey showen the below:
+- 10% of customer in New activation is risky and 4% very risky.
+- 6% of customer in CVM is risky and 2% very risky.
+- 6% of customer in organic is risky and 2% very risky.
+- so we need to  foucs on customer active line from store.
+
+## how Hotline_Class effective by 'ADSL' 
+px.histogram(data_frame=train_data, x ='ADSL' , color='Hotline_Class' , barmode='group' , text_auto=True,width = 800,
+                 height = 400)
+
+# Calculate counts of Hotline_Class for each ADSL category
+hotline_counts = train_data.groupby(['ADSL', 'Hotline_Class']).size().unstack(fill_value=0)
+
+# Calculate total counts of each ADSL category
+total_counts = train_data['ADSL'].value_counts()
+
+# Calculate percentage of each Hotline_Class within each ADSL category
+hotline_percentages = (hotline_counts.T / total_counts).T * 100
+
+# Reset index to make ADSL and Hotline_Class columns
+hotline_percentages =round(hotline_percentages.reset_index(),1)
+
+# Melt DataFrame to use in plotly express
+melted_df = pd.melt(hotline_percentages, id_vars=['ADSL'], var_name='Hotline_Class', value_name='Percentage')
+
+# Create grouped histogram
+fig = px.bar(melted_df, x='ADSL', y='Percentage', color='Hotline_Class', barmode='group',
+             text='Percentage', title="Percentage of Hotline_Class for each ADSL category",
+             labels={'Percentage': 'Percentage of Hotline_Class'},
+             width=800, height=400)
+
+# Show the plot
+fig.show()
+
+
+- chart showing that customer have ADSL got hotline 10% from total of customer active service.
+
+train_data.groupby('Hotline_Class')['AVG_payment_amount'].mean().sort_values(ascending = False)
+
+print(train_data.groupby('Hotline_Class')['AVG_payment_amount'].mean())
+
+train_data.groupby('Hotline_Class')['AVG_payment_amount'].mean().plot.bar(color=['red', 'blue', 'cyan','green'])
+
+- AVG_payment_amount have big impact for hotline action
+
+px.histogram(data_frame=train_data, x ='activation_years' , color='Hotline_Class' , barmode='group' , text_auto=True,width = 800,
+                 height = 400)
+
+- year 2022 have large number of very risky customer then 2023 and 2024 as we still didn't exceed 6 month and also we need to focus in this customer to aviod make them risky or very risky customer.
+
+px.histogram(data_frame=train_data, x ='Current Status'  , color='activation_years'  , barmode='group' , text_auto=True,width = 800,
+                 height = 400)
+
+- Chart showing that 2023 have highest deactivation and suspension.
+
+px.histogram(data_frame=train_data, x ='Hotline_6months_Group'  , color='Hotline_Class'  , barmode='group' , text_auto=True,width = 800,
+                 height = 400)
+
+train_data['Live Contracts'].value_counts()
+
+live_contracts_less500=train_data[train_data['Live Contracts']>4]
+
+
+# Create a new column 'Live_Contracts_Category'
+train_data['Live_Contracts_Category'] = train_data['Live Contracts'].apply(lambda x: 'other' if x > 4 else str(x))
+
+# Count the occurrences of each category in the new column
+contract_counts = train_data['Live_Contracts_Category'].value_counts()
+
+# Display the counts
+print(contract_counts)
+
+
+px.histogram(data_frame=train_data, x ='Live_Contracts_Category' , color='Hotline_Class'  , barmode='group' , text_auto=True,width = 800,
+                 height = 400)
+
+# Calculate counts of Hotline_Class for each ADSL category
+hotline_counts = train_data.groupby(['Live_Contracts_Category', 'Hotline_Class']).size().unstack(fill_value=0)
+
+# Calculate total counts of each ADSL category
+total_counts = train_data['Live_Contracts_Category'].value_counts()
+
+# Calculate percentage of each Hotline_Class within each ADSL category
+hotline_percentages = (hotline_counts.T / total_counts).T * 100
+
+# Reset index to make ADSL and Hotline_Class columns
+hotline_percentages =round(hotline_percentages.reset_index(),1)
+
+# Melt DataFrame to use in plotly express
+melted_df = pd.melt(hotline_percentages, id_vars=['Live_Contracts_Category'], var_name='Hotline_Class', value_name='Percentage')
+
+# Create grouped histogram
+fig = px.bar(melted_df, x='Live_Contracts_Category', y='Percentage', color='Hotline_Class', barmode='group',
+             text='Percentage', title="Percentage of Hotline_Class for each Category",
+             labels={'Percentage': 'Percentage of Hotline_Class'},
+             width=800, height=400)
+
+# Show the plot
+fig.show()
+
+
+- Chart showing that:
+- About 5% of customer have 3 bills is very risky and 9% of them risky.
+- Then customer have 4 and more than4 bills in the same average.
+- Customer have 2 bills about 10% risky and 4% very risky.
+- When customer have more 2 bills more likely to be risky account but more than 3 bills more likely to be very risky.
+
+# Transform the list values into separate rows
+expanded_train_data = train_data.explode('Tariff_Model_list')
+
+# Plot the histogram
+fig = px.histogram(data_frame=expanded_train_data, x='Tariff_Model_list', color='Hotline_Class', barmode='group', text_auto=True, width=900, height=400)
+fig.show()
+
+
+
+- Red essential have highest number of very risky and risky customer then Red advanced.
+
+# Get unique values in the column
+unique_values = train_data['Standardized Payment Channel'].unique()
+
+# Initialize an empty mapping dictionary
+channel_mapping = {}
+
+# Iterate over unique values and create mapping
+for value in unique_values:
+    # Split the value by comma and strip spaces
+    components = [x.strip() for x in value.split(',')]
+    # Sort the components alphabetically to standardize the order
+    components.sort()
+    # Join the components to create a standardized value
+    standardized_value = ','.join(components)
+    # Map the original value to the standardized value
+    channel_mapping[value] = standardized_value
+
+# Apply mapping to the column
+train_data['Standardized Payment Channel'] = train_data['Standardized Payment Channel'].map(channel_mapping)
+
+
+
+
+from collections import Counter
+
+# Assuming 'train_data' is your pandas DataFrame
+column_values = train_data['Standardized Payment Channel']
+
+# Step 2: Split the values using comma as the delimiter
+split_values = column_values.str.split(',')
+
+# Step 3: Flatten the list of values
+flattened_values = [value for sublist in split_values for value in sublist]
+
+# If you prefer pandas way:
+category_counts = column_values.str.split(',').explode().value_counts()
+
+category_counts
+
+plt.figure(figsize=(8, 4))
+category_counts.plot(kind='bar')
+plt.title('Category Counts')
+plt.xlabel('Category')
+plt.ylabel('Count')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# Assuming 'train_data' is your DataFrame
+threshold = 500  # Threshold for merging infrequent categories
+counts = train_data['Standardized Payment Channel'].value_counts()
+infrequent_categories = counts[counts < threshold].index
+
+# Replace infrequent categories with 'Other'
+train_data['Standardized Payment Channel'] = train_data['Standardized Payment Channel'].apply(lambda x: 'Other' if x in infrequent_categories else x)
+
+
+train_data['Standardized Payment Channel'].nunique()
+
+Payment_channel_top10=train_data['Standardized Payment Channel'].value_counts().head(10).reset_index()
+Payment_channel_top10
+
+import plotly.graph_objs as go
+# Group the data by 'Hotline_Class'
+grouped_data = train_data.groupby('Hotline_Class')
+
+# Create an empty figure
+fig = go.Figure()
+
+# Plot the top 10 categories for each 'Hotline_Class'
+for hotline_class, group in grouped_data:
+    # Count the occurrences of each category within the group
+    category_counts = group['Standardized Payment Channel'].value_counts().nlargest(10)
+    
+    # Add a bar trace for the top 10 categories for the current 'Hotline_Class'
+    fig.add_trace(go.Bar(x=category_counts.index, y=category_counts.values, name=f'Hotline_Class {hotline_class}'))
+
+# Update layout
+fig.update_layout(
+    title='Top 10 Categories by Hotline_Class',
+    xaxis_title='Categories',
+    yaxis_title='Frequency',
+    barmode='group',  # 'group' for grouped bar charts, 'stack' for stacked bar charts
+    xaxis=dict(tickangle=45),
+    width=900,
+    height=500
+)
+
+# Show the plot
+fig.show()
+
+
+
+px.histogram(data_frame=train_data, x ='Bill_Cycle_Customer_Segment' , color='Hotline_Class'  , barmode='group' , text_auto=True,width = 900,
+                 height = 500)
+
+- Premium BC2 more likely to have very risky and risky customer then high BC1.
+
+## Prepare data for model
+
+train_data.columns
+
+# Convert list elements to strings and join them
+train_data['Tariff_Model_str'] = train_data['Tariff_Model_list'].apply(lambda x: ','.join(map(str, x)))
+
+
+Standardized_Payment_blank=train_data[train_data['Standardized Payment Channel']== ""]
+
+
+train_data.drop(Standardized_Payment_blank.index,inplace=True)
+
+train_data.reset_index(drop=True,inplace=True)
+
+data=train_data.copy()
+
+train_data.columns
+
+# Frequency counts
+counts = train_data['Bill_Cycle_Customer_Segment'].value_counts()
+
+# Establish a threshold
+threshold = 1000  # example threshold
+
+train_data['Bill_Cycle_Customer_Segment'] = train_data['Bill_Cycle_Customer_Segment'].apply(
+    lambda x: 'Other' if counts[x] < threshold else x
+)
+
+
+## remove unneeded columns 
+train_data.drop(['Customer Code','Final Tarrif','Service Combinations','percentage_hotlines','Billing Amount','Activation Date','Num_Hotline','Activation Month','Tariff Model','Payment Channel','Tariff_Model_list','Payment_Channel_Missing','Payment_Channel_list','Converted_Dates','Hotline_6months_Group','Live_Contracts_Category'],axis=1,inplace=True)
+
+train_data.info()
+
+train_data['Hotline_Class'].unique()
+
+# replacing Good,Poorand Standard  in Credit_Score variable with 0,1 and 2 respectively
+train_data['Hotline_Class'].replace('outstanding', 0, inplace=True)
+train_data['Hotline_Class'].replace('Normal', 1, inplace=True)
+train_data['Hotline_Class'].replace('risky', 2, inplace=True)
+train_data['Hotline_Class'].replace('very risky', 3, inplace=True)
+
+train_data.T
+
+Encoder = ColumnTransformer(transformers=[("OHE",OneHotEncoder(sparse=False , drop="first" ), ["Bill Cycle","Current Status","ADSL","Activation source","Tarrif_combinetion","activation_months","activation_day"]) , ("BE",BinaryEncoder() , ["Standardized Payment Channel", "Tariff_Model_str","Bill_Cycle_Customer_Segment","Customer Segment"] )] , remainder = "passthrough")
+
+from sklearn.linear_model import LogisticRegression
+lr = LogisticRegression(max_iter=1000)
+
+steps = []
+steps.append(("Encoder" , Encoder))
+steps.append(("Scaler" , RobustScaler()))
+steps.append(("Model" , LogisticRegression()))
+pipeline = Pipeline(steps=steps)
+
+x = train_data.drop("Hotline_Class" , axis = 1 )
+y = train_data["Hotline_Class"]
+
+import  warnings 
+warnings.filterwarnings('ignore')
+
+results = cross_validate(pipeline , x ,y , cv = 5 , scoring="accuracy" , return_train_score=True)
+
+results["train_score"].mean()
+
+results["test_score"].mean()
+
+from imblearn.pipeline import Pipeline as ImPipeline
+from imblearn.combine import SMOTETomek
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import TomekLinks
+
+models = list()
+models.append(("xg" , XGBClassifier()))
+
+for model in models:
+    steps = []
+steps.append(("Encoder" , Encoder))
+steps.append(("Scaler" , RobustScaler()))
+steps.append(("SmoteTomek" , SMOTETomek(smote=SMOTE(sampling_strategy={0:116463} , random_state=24))))
+steps.append(("xg" , XGBClassifier()))
+pipeline = ImPipeline(steps = steps)
+scores = cross_validate(pipeline , x , y , scoring="accuracy"  ,cv = 5 , return_train_score=True,return_estimator=True)
+print("Train_accuracy" , scores["train_score"].mean() )
+print("-" * 10)
+print("Test_accuracy" , scores["test_score"].mean())
+
+from sklearn.metrics import classification_report
+for model in models:
+    steps = []
+    steps.append(("Encoder" , Encoder))
+    steps.append(("Scaler" , RobustScaler()))
+    steps.append(("SmoteTomek" , SMOTETomek(smote=SMOTE(sampling_strategy={0:116463} , random_state=24))))
+    steps.append(("xg" , XGBClassifier()))
+    pipeline = ImPipeline(steps = steps)
+    scores = cross_validate(pipeline , x , y , scoring="accuracy"  ,cv = 5 , return_train_score=True,return_estimator=True)
+ # Fit the pipeline on the entire dataset
+    pipeline.fit(x, y)
+
+    # Make predictions on the test set
+    y_pred = pipeline.predict(x)
+
+    print(model[0])
+    print("Train Accuracy:", scores["train_score"].mean())
+    print("Test Accuracy:", scores["test_score"].mean())
+    print("-" * 20)
+    print("Classification Report:\n", classification_report(y, y_pred))
+    print("-" * 20)
+    print("\n")
+
+import streamlit as st
+import pandas as pd
+from io import BytesIO
+import joblib
+import openpyxl
+import xgboost
+import sklearn
+# Load pre-trained model and input features
+Inputs = joblib.load("Inputs.pkl")
+Model = joblib.load("Model.pkl")
+
+# Define the prediction function
+def prediction(Customer_Segment, Bill_Cycle, Current_Status, Live_Contracts,
+               Hotline_Count_Last_6_months, ADSL, Activation_source,
+               Tarrif_combinetion, Standardized_Payment_Channel,
+               variance_days, AVG_payment_amount, activation_years,
+               activation_months, activation_day, Bill_Cycle_Customer_Segment,
+               Tariff_Model_str):
+    test_df = pd.DataFrame(columns=Inputs)
+    test_df.at[0, "Customer Segment"] = Customer_Segment
+    test_df.at[0, "Bill Cycle"] = Bill_Cycle
+    test_df.at[0, "Current Status"] = Current_Status
+    test_df.at[0, "Live Contracts"] = Live_Contracts
+    test_df.at[0, "Hotline Count (Last 6 months)"] = Hotline_Count_Last_6_months
+    test_df.at[0, "ADSL"] = ADSL
+    test_df.at[0, "Activation source"] = Activation_source
+    test_df.at[0, "Tarrif_combinetion"] = Tarrif_combinetion
+    test_df.at[0, "Standardized Payment Channel"] = Standardized_Payment_Channel
+    test_df.at[0, "variance_days"] = variance_days
+    test_df.at[0, "AVG_payment_amount"] = AVG_payment_amount
+    test_df.at[0, "activation_years"] = activation_years
+    test_df.at[0, "activation_months"] = activation_months
+    test_df.at[0, "activation_day"] = activation_day
+    test_df.at[0, "Bill_Cycle_Customer_Segment"] = Bill_Cycle_Customer_Segment
+    test_df.at[0, "Tariff_Model_str"] = Tariff_Model_str
+    result = Model.predict(test_df)[0]
+    return result
+
+# Define the class mapping for the target column
+class_mapping = {0: 'outstanding', 1: 'Normal', 2: 'risky', 3: 'very risky'}
+
+# Define the Streamlit app
+def main():
+    st.title("Hotline Action Prediction")
+
+    # File uploader
+    uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
+
+    if uploaded_file is not None:
+        # Read the uploaded file
+        input_df = pd.read_excel(uploaded_file, dtype=str)
+        st.write("Uploaded Data")
+        st.dataframe(input_df)
+
+        # Make predictions
+        predictions = []
+        for index, row in input_df.iterrows():
+            pred = prediction(row['Customer Segment'], row['Bill Cycle'], row['Current Status'], row['Live Contracts'],
+                              row['Hotline Count (Last 6 months)'], row['ADSL'], row['Activation source'],
+                              row['Tarrif_combinetion'], row['Standardized Payment Channel'], row['variance_days'],
+                              row['AVG_payment_amount'], row['activation_years'], row['activation_months'],
+                              row['activation_day'], row['Bill_Cycle_Customer_Segment'], row['Tariff_Model_str'])
+            predictions.append(pred)
+        
+        # Map the numeric predictions to their respective classes
+        input_df['Hotline_class'] = [class_mapping[pred] for pred in predictions]
+
+        # Display the data with predictions
+        st.write("Data with Predictions")
+        st.dataframe(input_df)
+
+        # Function to convert dataframe to excel
+        def to_excel(df):
+            output = BytesIO()
+            writer = pd.ExcelWriter(output, engine='xlsxwriter')
+            df.to_excel(writer, index=False, sheet_name='Sheet1')
+            writer.save()
+            processed_data = output.getvalue()
+            return processed_data
+
+        # Convert dataframe to excel
+        processed_data = to_excel(input_df)
+
+        # Download button
+        st.download_button(
+            label="Download Excel",
+            data=processed_data,
+            file_name="predictions.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+if __name__ == "__main__":
+    main()
